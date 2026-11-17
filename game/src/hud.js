@@ -66,8 +66,10 @@ export function createHud() {
       div.className = 'kf';
       div.textContent = text;
       els.killfeed.prepend(div);
+      // Keep the last 4 kills visible for the rest of the round (no timed
+      // expiry — a death, the player's included, must still be readable
+      // when someone looks at the feed).
       while (els.killfeed.children.length > 4) els.killfeed.lastChild.remove();
-      setTimeout(() => div.remove(), 6000);
     },
     banner(text, ms = 2500) {
       if (!els.banner) return;
