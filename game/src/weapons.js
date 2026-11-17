@@ -17,7 +17,7 @@ export function createWeapons(camera) {
   const ammo = {};
   for (const w of WEAPONS) ammo[w.id] = { mag: w.magSize, reserve: w.reserve };
   const state = {
-    current: 'p9', cooldown: 0, reloadLeft: 0, kick: 0, flash: 0,
+    current: 'p9', primary: 'p9', cooldown: 0, reloadLeft: 0, kick: 0, flash: 0,
     grenades: 0, zoomed: false,
   };
   const grenades = [];
@@ -114,6 +114,8 @@ export function createWeapons(camera) {
     if (owned.has(id)) return false;
     owned.add(id);
     ammo[id] = { mag: w.magSize, reserve: w.reserve };
+    // Buying a non-pistol weapon makes it the primary (slot 1) and equips it.
+    if (id !== 'p9' && id !== 'frag') state.primary = id;
     state.current = id;
     buildViewModel();
     return true;
