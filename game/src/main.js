@@ -121,6 +121,9 @@ function damagePlayer(amount, attacker, isHead) {
 const bots = createBots(scene, world, {
   onShoot(bot, from, to) {
     addTracer(from, to);
+    // A bot gunshot alerts nearby bots (hearing, 25 m): they turn toward
+    // the shooter, so defenders react when the attackers open fire.
+    bots.hearShot(from);
     const d = from.distanceTo(player.state.pos);
     if (d < 25) audio.shoot('vk47');
   },
@@ -138,6 +141,9 @@ const bots = createBots(scene, world, {
     if (victim === 'player') audio.roundLose();
   },
   onPlant(site) {
+    // A bot plant must drive the round machine too (40 s bomb timer,
+    // explosion win) — rounds.plant is what starts the planted phase.
+    rounds.plant(site);
     bomb.state = 'planted';
     bomb.site = site;
     bomb.pos.copy(world.sites[site].center);
@@ -151,6 +157,10 @@ const bots = createBots(scene, world, {
     bomb.state = 'defused';
     bombMesh.visible = false;
     audio.defuse();
+    // A bot defuse must end the round (Wardens win) — rounds.defuse is
+    // what closes the planted phase. Called last so onRoundEnd's reset
+    // (bomb 'none') is the final state.
+    rounds.defuse();
   },
   onBombDropped(pos) {
     bomb.state = 'dropped';
@@ -459,6 +469,9 @@ function simStep(dt) {
     playerAlive: player.state.alive,
     playerSpeed: player.groundSpeed(),
     bombState: bomb.state,
+    // Combat only in the live phases — during buy/end the bots walk to
+    // position but must not shoot, plant or kill.
+    combat: rounds.isLive(),
     onShoot: null, onDamage: null, onKill: null, onPlant: null, onDefuse: null,
   });
 
