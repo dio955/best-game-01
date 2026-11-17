@@ -28,6 +28,7 @@ export function createBots(scene, world, onEvent) {
   let bombSite = null;
   let bombPos = new THREE.Vector3();
   let carrier = null;
+  let fetchBot = null;
   const rng = mulberry32(1337);
 
   function makeMesh(team) {
@@ -95,6 +96,27 @@ export function createBots(scene, world, onEvent) {
     bot.pathIndex = 0;
   }
 
+  // Send the nearest living Ember bot to fetch a dropped bomb. Without
+  // this, no bot's path ever goes near the dropped bomb and the plant
+  // rate stalls (the bomb just lies there until the round ends).
+  function assignFetcher() {
+    let best = null;
+    let bestD = Infinity;
+    for (const b of bots) {
+      if (b.team !== 'ember' || !b.alive) continue;
+      const d = Math.hypot(bombPos.x - b.pos.x, bombPos.z - b.pos.z);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    fetchBot = best;
+    if (fetchBot) {
+      // The fetcher beelines to the bomb (like the carrier beelines to its
+      // site): clear any engage state so it moves instead of stopping to fight.
+      fetchBot.state = 'move';
+      fetchBot.target = null;
+      setPath(fetchBot, bombPos);
+    }
+  }
+
   function reset() {
     const emberRoles = ['rushA', 'rushB', 'mid', 'rushA2'];
     const wardenRoles = ['holdA', 'holdA2', 'holdB', 'holdB2', 'mid'];
@@ -126,6 +148,7 @@ export function createBots(scene, world, onEvent) {
     carrier = bots.find((b) => b.team === 'ember' && b.role === 'rushA') || null;
     if (carrier) carrier.isCarrier = true;
     bombState = 'carried';
+    fetchBot = null;
   }
 
   // 2D line of sight: sample the segment; blocked by any collider taller than 1.3 m.
@@ -259,6 +282,9 @@ export function createBots(scene, world, onEvent) {
     // fight — otherwise the defenders are wiped out before the round
     // starts and the round ends by elimination in ~20 s with no plant.
     const combat = ctx.combat !== false;
+    // If the bomb is dropped and the fetcher is gone (died en route),
+    // send the next nearest living Ember bot to fetch it.
+    if (bombState === 'dropped' && (!fetchBot || !fetchBot.alive)) assignFetcher();
     for (const bot of bots) {
       if (!bot.alive) {
         if (bot.deathTimer > 0) {
@@ -276,6 +302,7 @@ export function createBots(scene, world, onEvent) {
           bot.isCarrier = true;
           carrier = bot;
           bombState = 'carried';
+          fetchBot = null;
           onEvent.onBombPickup(bot);
           setPath(bot, roleTarget(bot));
         }
@@ -329,8 +356,8 @@ export function createBots(scene, world, onEvent) {
       // bots walk to position but do not acquire targets or fight. The
       // bomb carrier never scans: its job is to reach the site and plant,
       // not to stop and fight — its teammates clear the way.
-      if (combat && !bot.isCarrier) bot.scanTimer -= dt;
-      if (combat && !bot.isCarrier && bot.scanTimer <= 0) {
+      if (combat && !bot.isCarrier && bot !== fetchBot) bot.scanTimer -= dt;
+      if (combat && !bot.isCarrier && bot !== fetchBot && bot.scanTimer <= 0) {
         bot.scanTimer = 0.15;
         const found = findTarget(bot, ctx);
         if (found) {
@@ -347,7 +374,7 @@ export function createBots(scene, world, onEvent) {
           bot.state = 'move';
         }
       }
-      if (combat && !bot.isCarrier && bot.state === 'engage' && bot.target) {
+      if (combat && !bot.isCarrier && bot !== fetchBot && bot.state === 'engage' && bot.target) {
         const tp = bot.target.kind === 'bot' ? bot.target.bot.pos : ctx.playerPos;
         aimAt(bot, tp, dt);
         fireBurst(bot, ctx, dt);
@@ -357,6 +384,34 @@ export function createBots(scene, world, onEvent) {
         // buy, live would open at point-blank range and the round would be
         // decided in seconds, before the carrier can ever plant.
         moveAlongPath(bot, dt);
+        // The fetcher fires on the move: it keeps advancing to the bomb
+        // while shooting at visible enemies (it never stops to engage, but
+        // it is not defenceless — it clears its own path to the bomb).
+        if (bot === fetchBot) {
+          const seen = findTarget(bot, ctx);
+          if (seen) {
+            bot.target = seen;
+            const tp = seen.kind === 'bot' ? seen.bot.pos : ctx.playerPos;
+            aimAt(bot, tp, dt);
+            fireBurst(bot, ctx, dt);
+          } else {
+            bot.target = null;
+          }
+        }
+      }
+      // Fetcher final approach: findPath snaps to the nearest waypoint
+      // node, which can be metres from the dropped bomb (outside the
+      // 1.5 m pickup radius). Once the node path is done, walk straight
+      // to the exact bomb position so the pickup actually triggers.
+      if (bot === fetchBot && bombState === 'dropped' && bot.state === 'move' && bot.pathIndex >= bot.path.length) {
+        const dx = bombPos.x - bot.pos.x;
+        const dz = bombPos.z - bot.pos.z;
+        const d = Math.hypot(dx, dz);
+        if (d > 0.3) {
+          const stepLen = Math.min(d, bot.speed * dt);
+          collideMove(bot.pos, (dx / d) * stepLen, 0, (dz / d) * stepLen, 0.35, 1.7, 0.35, world.colliders);
+          bot.yaw = Math.atan2(-(dx / d), -(dz / d));
+        }
       }
       // Sync the mesh.
       bot.mesh.position.copy(bot.pos);
@@ -380,6 +435,7 @@ export function createBots(scene, world, onEvent) {
         bombState = 'dropped';
         bombPos.copy(bot.pos);
         onEvent.onBombDropped(bombPos.clone());
+        assignFetcher();
       }
       onEvent.onKill(bot, attacker);
     }
@@ -388,7 +444,7 @@ export function createBots(scene, world, onEvent) {
     // fails if the carrier dies) or is the bomb carrier (the carrier's
     // job is to reach the site, not to stop and fight; its teammates
     // cover it).
-    if (attacker && bot.state !== 'plant' && bot.state !== 'defuse' && !bot.isCarrier) {
+    if (attacker && bot.state !== 'plant' && bot.state !== 'defuse' && !bot.isCarrier && bot !== fetchBot) {
       bot.target = attacker === 'player' ? { kind: 'player' } : { kind: 'bot', bot: attacker };
       bot.state = 'engage';
       bot.reactTimer = REACT_TIME;
