@@ -209,6 +209,7 @@ const rounds = createRounds({
     player.reset(world.spawns.ember[0]);
     bomb.state = 'carried';
     bomb.carrier = bots.carrier;
+    hud.clearKillfeed();
     hud.banner(`ROUND ${n} — BUY PHASE`, 2500);
   },
 });
@@ -232,6 +233,7 @@ function startMatch() {
   bomb.carrier = bots.carrier;
   rounds.startMatch();
   hud.hideOverlay();
+  hud.clearKillfeed();
   hud.banner('ROUND 1 — BUY PHASE', 2500);
   // Refresh the HUD at once (score 0-0, timer 0:15) and make sure the sim
   // loop runs, so a restart never leaves a stale score or a frozen timer —
