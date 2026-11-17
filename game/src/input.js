@@ -37,8 +37,14 @@ export function createInput() {
     get locked() { return locked; },
     get mouse() { return mouse; },
     isDown(code) { return keys.has(code); },
-    // Edge-triggered: true once per physical press, cleared by endFrame().
-    pressed(code) { return pressedSet.has(code); },
+    // Edge-triggered: true once per physical press; reading it consumes it,
+    // so one press fires exactly one action even when the sim runs several
+    // substeps per frame. Cleared by endFrame() if never read.
+    pressed(code) {
+      if (!pressedSet.has(code)) return false;
+      pressedSet.delete(code);
+      return true;
+    },
     // Accumulated mouse movement since the last call (pointer-locked only).
     consumeLook() {
       const out = { dx: look.dx, dy: look.dy };
