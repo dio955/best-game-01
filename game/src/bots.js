@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { collideMove } from './world.js';
 import { TEAM_COLOR } from './palette.js';
 
-const WALK_SPEED = 3.2;
+const WALK_SPEED = 4.5;
 const REACT_TIME = 0.35;
 const SIGHT_RANGE = 40;
 const HEAR_RANGE = 25;
@@ -254,6 +254,11 @@ export function createBots(scene, world, onEvent) {
   }
 
   function step(dt, ctx) {
+    // Combat (shooting, planting) is only allowed in the live phases.
+    // During the buy phase the bots walk to their positions but must not
+    // fight — otherwise the defenders are wiped out before the round
+    // starts and the round ends by elimination in ~20 s with no plant.
+    const combat = ctx.combat !== false;
     for (const bot of bots) {
       if (!bot.alive) {
         if (bot.deathTimer > 0) {
@@ -294,18 +299,24 @@ export function createBots(scene, world, onEvent) {
         }
         continue;
       }
-      // Carrier plants at its site when clear.
-      if (bot.isCarrier && bombState === 'carried') {
+      // Carrier plants at its site when clear — live phases only, never
+      // during the buy phase (the bomb must not be planted before the
+      // round starts).
+      if (combat && bot.isCarrier && bombState === 'carried') {
         const site = bot.role === 'rushB' ? world.sites.B : world.sites.A;
         const d = Math.hypot(site.center.x - bot.pos.x, site.center.z - bot.pos.z);
         if (d < site.radius && bot.state !== 'plant') {
           bot.state = 'plant';
-          bot.plantTimer = 3;
+          bot.plantTimer = 2;
         }
         if (bot.state === 'plant') {
           bot.plantTimer -= dt;
           if (bot.plantTimer <= 0) {
             bot.state = 'move';
+            // The bomb is planted: this bot is no longer the carrier, so if
+            // it dies now the bomb must NOT drop (it is already planted).
+            bot.isCarrier = false;
+            carrier = null;
             bombState = 'planted';
             bombSite = bot.role === 'rushB' ? 'B' : 'A';
             bombPos.set(site.center.x, 0, site.center.z);
@@ -314,9 +325,12 @@ export function createBots(scene, world, onEvent) {
           continue;
         }
       }
-      // Combat scan (staggered).
-      bot.scanTimer -= dt;
-      if (bot.scanTimer <= 0) {
+      // Combat scan (staggered) — live phases only; during buy/end the
+      // bots walk to position but do not acquire targets or fight. The
+      // bomb carrier never scans: its job is to reach the site and plant,
+      // not to stop and fight — its teammates clear the way.
+      if (combat && !bot.isCarrier) bot.scanTimer -= dt;
+      if (combat && !bot.isCarrier && bot.scanTimer <= 0) {
         bot.scanTimer = 0.15;
         const found = findTarget(bot, ctx);
         if (found) {
@@ -333,11 +347,15 @@ export function createBots(scene, world, onEvent) {
           bot.state = 'move';
         }
       }
-      if (bot.state === 'engage' && bot.target) {
+      if (combat && !bot.isCarrier && bot.state === 'engage' && bot.target) {
         const tp = bot.target.kind === 'bot' ? bot.target.bot.pos : ctx.playerPos;
         aimAt(bot, tp, dt);
         fireBurst(bot, ctx, dt);
-      } else {
+      } else if (combat) {
+        // Move along the path — live phases only. During buy/end the bots
+        // hold at spawn (freeze time): if they walked to the sites during
+        // buy, live would open at point-blank range and the round would be
+        // decided in seconds, before the carrier can ever plant.
         moveAlongPath(bot, dt);
       }
       // Sync the mesh.
@@ -364,6 +382,19 @@ export function createBots(scene, world, onEvent) {
         onEvent.onBombDropped(bombPos.clone());
       }
       onEvent.onKill(bot, attacker);
+    }
+    // Survived the hit: fight back — unless the bot is planting/defusing
+    // (those channels must not be interrupted by damage; the plant only
+    // fails if the carrier dies) or is the bomb carrier (the carrier's
+    // job is to reach the site, not to stop and fight; its teammates
+    // cover it).
+    if (attacker && bot.state !== 'plant' && bot.state !== 'defuse' && !bot.isCarrier) {
+      bot.target = attacker === 'player' ? { kind: 'player' } : { kind: 'bot', bot: attacker };
+      bot.state = 'engage';
+      bot.reactTimer = REACT_TIME;
+      if (attacker !== 'player' && attacker.pos) {
+        bot.yaw = Math.atan2(-(attacker.pos.x - bot.pos.x), -(attacker.pos.z - bot.pos.z));
+      }
     }
     return bot;
   }
