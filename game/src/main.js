@@ -126,6 +126,9 @@ const bots = createBots(scene, world, {
   },
   onDamage(victim, amount, attacker, isHead) {
     if (victim === 'player') damagePlayer(amount, attacker, isHead);
+    // Bot-vs-bot hits arrive here with the victim bot object; route them
+    // through bots.damage (torso mesh) or bots can never kill each other.
+    else if (victim && victim.bodyMesh) bots.damage(victim.bodyMesh, amount, attacker, isHead);
   },
   onKill(victim, attacker) {
     const vName = victim === 'player' ? 'You' : botName(victim);
@@ -200,6 +203,17 @@ const rounds = createRounds({
   },
 });
 
+// The fixed-step loop runs on requestAnimationFrame; in screenshot (?shot=)
+// mode it never starts, so PLAY AGAIN must start it or the game stays frozen.
+let loopRunning = false;
+function startLoop() {
+  if (loopRunning) return;
+  loopRunning = true;
+  last = performance.now();
+  acc = 0;
+  requestAnimationFrame(frame);
+}
+
 function startMatch() {
   economy.reset();
   bots.reset();
@@ -209,6 +223,11 @@ function startMatch() {
   rounds.startMatch();
   hud.hideOverlay();
   hud.banner('ROUND 1 — BUY PHASE', 2500);
+  // Refresh the HUD at once (score 0-0, timer 0:15) and make sure the sim
+  // loop runs, so a restart never leaves a stale score or a frozen timer —
+  // in live mode or in a screenshot mode.
+  updateHud();
+  startLoop();
 }
 
 // --- Shooting ---
@@ -296,8 +315,18 @@ function tryBuy(key) {
     return;
   }
   if (weapons.owns(it.id)) { weapons.select(it.id); audio.click(); openBuy(); return; }
-  if (economy.buy(w.price)) { weapons.buy(it.id); audio.buy(); }
+  // Buying a weapon equips it at once (the player holds the new rifle).
+  if (economy.buy(w.price)) { weapons.buy(it.id); weapons.select(it.id); audio.buy(); }
   openBuy();
+}
+
+// Cycle to the next owned weapon (Digit3): P9 -> VK-47 -> Hornet -> ...
+function cycleWeapon() {
+  const order = ['p9', 'vk47', 'hornet', 'longshot', 'breacher'];
+  const ownedList = order.filter((id) => weapons.owns(id));
+  if (ownedList.length <= 1) return;
+  const idx = ownedList.indexOf(weapons.state.current);
+  weapons.select(ownedList[(idx + 1) % ownedList.length]);
 }
 
 // --- Input wiring ---
@@ -340,10 +369,13 @@ function simStep(dt) {
   player.look(look.dx, look.dy);
   player.step(dt, input);
 
-  // Weapon switching (1/2/3) and actions.
-  if (input.pressed('Digit1')) weapons.select('p9');
-  if (input.pressed('Digit2')) weapons.select('vk47');
-  if (input.pressed('Digit3')) weapons.select('hornet');
+  // Weapon switching (1 = primary, 2 = pistol, 3 = cycle owned) — only when
+  // the buy menu is closed, so one digit press buys OR switches, never both.
+  if (!buyOpen) {
+    if (input.pressed('Digit1')) weapons.select(weapons.state.primary);
+    if (input.pressed('Digit2')) weapons.select('p9');
+    if (input.pressed('Digit3')) cycleWeapon();
+  }
   if (input.pressed('KeyR')) { weapons.reload(); audio.reload(); }
   if (input.pressed('KeyB')) { buyOpen ? (buyOpen = false, hud.hideBuy()) : openBuy(); }
   if (buyOpen) {
@@ -363,9 +395,10 @@ function simStep(dt) {
     camera.fov = wantZoom ? 75 / 2.2 : 75;
     camera.updateProjectionMatrix();
   }
-  // Shooting.
+  // Shooting — allowed in the buy phase too (the prototype allowed it).
   const w = weapons.current();
-  if (input.mouse.down && player.state.alive && rounds.isLive()) {
+  const canShoot = rounds.state() === 'buy' || rounds.isLive();
+  if (input.mouse.down && player.state.alive && canShoot) {
     if (w.auto) shootOnce();
     else if (input.mouse.clicked) shootOnce();
   }
@@ -579,5 +612,5 @@ if (shotMode) {
   renderShot(shotMode);
 } else {
   hud.showOverlay('overlayStart');
-  requestAnimationFrame(frame);
+  startLoop();
 }
