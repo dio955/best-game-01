@@ -7,6 +7,7 @@ export function createHud() {
     healthNum: $('health-num'), healthFill: $('health-fill'), armorFill: $('armor-fill'),
     ammoMag: $('ammo-mag'), ammoReserve: $('ammo-reserve'), weaponName: $('weapon-name'),
     grenadeCount: $('grenade-count'), money: $('money'), timer: $('timer'),
+    topbar: $('topbar'),
     scoreEmber: $('score-ember'), scoreWardens: $('score-wardens'), roundNum: $('round-num'),
     aliveEmber: $('alive-ember'), aliveWardens: $('alive-wardens'),
     bombStatus: $('bomb-status'), killfeed: $('killfeed'), buyMenu: $('buy-menu'),
@@ -71,6 +72,9 @@ export function createHud() {
       // when someone looks at the feed).
       while (els.killfeed.children.length > 4) els.killfeed.lastChild.remove();
     },
+    clearKillfeed() {
+      if (els.killfeed) els.killfeed.innerHTML = '';
+    },
     banner(text, ms = 2500) {
       if (!els.banner) return;
       els.banner.textContent = text;
@@ -90,11 +94,15 @@ export function createHud() {
       for (const k of ['overlayStart', 'overlayPause', 'overlayEnd']) {
         if (els[k]) els[k].classList.toggle('show', k === which);
       }
+      // At match end the topbar (ROUND / timer / score) is stale — the end
+      // overlay carries the final score, so hide the bar until the next match.
+      if (els.topbar) els.topbar.style.display = which === 'overlayEnd' ? 'none' : '';
     },
     hideOverlay() {
       for (const k of ['overlayStart', 'overlayPause', 'overlayEnd']) {
         if (els[k]) els[k].classList.remove('show');
       }
+      if (els.topbar) els.topbar.style.display = '';
     },
     setEnd(winner, score) {
       if (els.endTitle) els.endTitle.textContent = winner === 'ember' ? 'EMBER WINS THE MATCH' : 'WARDENS WIN THE MATCH';
