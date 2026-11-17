@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cinderworks — tactical FPS</title>
+<style>
+:root {
+  --canvas: #20242b; --surface: #31363e; --hairline: #43484f;
+  --ink: #ece7db; --muted: #9aa1a8; --accent: #f0a830;
+  --ember: #e8703a; --frost: #5fb8d8;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: var(--canvas); }
+body { font-family: "Segoe UI", system-ui, sans-serif; color: var(--ink); }
+#app, #app canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; font-size: 15px; }
+#crosshair { position: absolute; left: 50%; top: 50%; width: 0; height: 0; --gap: 6px; }
+#crosshair i { position: absolute; background: var(--ink); box-shadow: 0 0 2px #000; }
+#crosshair .ch-t { left: -1px; top: calc(-10px - var(--gap)); width: 2px; height: 10px; }
+#crosshair .ch-b { left: -1px; top: var(--gap); width: 2px; height: 10px; }
+#crosshair .ch-l { top: -1px; left: calc(-10px - var(--gap)); height: 2px; width: 10px; }
+#crosshair .ch-r { top: -1px; left: var(--gap); height: 2px; width: 10px; }
+#hitmarker { position: absolute; left: 50%; top: 50%; width: 26px; height: 26px;
+  transform: translate(-50%, -50%) rotate(45deg); opacity: 0; }
+#hitmarker::before, #hitmarker::after { content: ""; position: absolute; background: #fff; }
+#hitmarker::before { left: 12px; top: 0; width: 2px; height: 26px; }
+#hitmarker::after { top: 12px; left: 0; height: 2px; width: 26px; }
+#hitmarker.show { opacity: 1; }
+#hitmarker.kill::before, #hitmarker.kill::after { background: #ff4040; }
+#dmgdir { position: absolute; left: 50%; top: 50%; width: 180px; height: 180px;
+  transform: translate(-50%, -50%); opacity: 0; border: 3px solid transparent;
+  border-top-color: rgba(255, 60, 60, 0.9); border-radius: 50%; }
+#dmgdir.show { opacity: 1; }
+.panel { background: rgba(32, 36, 43, 0.82); border: 1px solid var(--hairline); border-radius: 6px; padding: 8px 12px; }
+#topbar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); text-align: center; }
+#timer { font-size: 26px; font-weight: 700; letter-spacing: 1px; }
+#timer[data-phase="BUY"] { color: var(--accent); }
+#timer[data-phase="PLANTED"] { color: #ff5040; }
+#round-num { color: var(--muted); font-size: 12px; letter-spacing: 2px; }
+#score-line { font-size: 20px; font-weight: 700; margin-top: 2px; }
+#score-ember { color: var(--ember); }
+#score-wardens { color: var(--frost); }
+.alive { margin-top: 4px; font-size: 11px; }
+.alive .pip { display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  background: #555; margin: 0 2px; }
+.alive .pip.on { background: var(--ink); }
+#bomb-status { margin-top: 6px; font-weight: 700; color: var(--accent); min-height: 18px; }
+#money-box { position: absolute; top: 12px; right: 14px; text-align: right; }
+#money { font-size: 22px; font-weight: 700; color: var(--accent); }
+#killfeed { position: absolute; top: 64px; right: 14px; text-align: right; }
+#killfeed .kf { background: rgba(32, 36, 43, 0.8); border: 1px solid var(--hairline);
+  border-radius: 4px; padding: 3px 8px; margin-top: 4px; font-size: 13px; }
+#health-box { position: absolute; left: 14px; bottom: 14px; width: 240px; }
+#health-num { font-size: 30px; font-weight: 700; }
+.bar { height: 8px; background: #14161a; border-radius: 4px; overflow: hidden; margin-top: 3px; }
+.bar i { display: block; height: 100%; background: var(--ember); }
+#armor-fill { background: var(--frost); }
+#ammo-box { position: absolute; right: 14px; bottom: 14px; text-align: right; }
+#ammo-mag { font-size: 32px; font-weight: 700; }
+#ammo-reserve { color: var(--muted); font-size: 18px; }
+#weapon-name { font-size: 14px; color: var(--muted); letter-spacing: 1px; }
+#grenade-count { color: var(--accent); font-weight: 700; }
+#banner { position: absolute; left: 50%; top: 34%; transform: translate(-50%, -50%);
+  font-size: 34px; font-weight: 800; letter-spacing: 2px; text-align: center;
+  text-shadow: 0 2px 12px #000; opacity: 0; transition: opacity 0.2s; }
+#banner.show { opacity: 1; }
+#buy-menu { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 420px; display: none; pointer-events: auto; }
+#buy-menu.show { display: block; }
+#buy-menu h2 { color: var(--accent); margin-bottom: 8px; letter-spacing: 2px; }
+.buy-item { padding: 6px 8px; border-bottom: 1px solid var(--hairline); font-size: 15px; }
+.buy-item b { color: var(--accent); margin-right: 8px; }
+.buy-item.owned { color: var(--muted); }
+.buy-item.poor { opacity: 0.55; }
+.buy-hint { margin-top: 8px; color: var(--muted); font-size: 13px; }
+.overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+  flex-direction: column; text-align: center; background: rgba(16, 18, 22, 0.72); z-index: 10; }
+.overlay.show { display: flex; }
+.overlay h1 { font-size: 56px; letter-spacing: 6px; color: var(--accent); text-shadow: 0 0 24px rgba(240, 168, 48, 0.4); }
+.overlay h2 { font-size: 22px; color: var(--ink); margin: 6px 0 18px; letter-spacing: 2px; }
+.overlay p { color: var(--muted); line-height: 1.7; max-width: 560px; }
+.overlay button { pointer-events: auto; margin-top: 22px; font-size: 18px; padding: 12px 34px;
+  background: var(--accent); color: #1a1c20; border: 0; border-radius: 6px; cursor: pointer; font-weight: 700; }
+.overlay button:hover { background: #ffb940; }
+.keys { display: grid; grid-template-columns: auto auto; gap: 4px 18px; text-align: left; margin-top: 14px; }
+.keys b { color: var(--accent); }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.min.js" } }
+</script>
+</head>
+<body>
+<div id="app"></div>
+<div id="hud">
+  <div id="crosshair"><i class="ch-t"></i><i class="ch-b"></i><i class="ch-l"></i><i class="ch-r"></i></div>
+  <div id="hitmarker"></div>
+  <div id="dmgdir"></div>
+  <div id="topbar" class="panel">
+    <div id="timer" data-phase="">0:00</div>
+    <div id="round-num">ROUND 1</div>
+    <div id="score-line"><span id="score-ember">0</span> — <span id="score-wardens">0</span></div>
+    <div class="alive">EMBER <span id="alive-ember"></span> · WARDENS <span id="alive-wardens"></span></div>
+    <div id="bomb-status"></div>
+  </div>
+  <div id="money-box" class="panel"><div id="money">$800</div><div style="color:var(--muted);font-size:12px">B — BUY MENU</div></div>
+  <div id="killfeed"></div>
+  <div id="health-box" class="panel">
+    <div><span id="health-num">100</span> <span style="color:var(--muted)">HP</span></div>
+    <div class="bar"><i id="health-fill" style="width:100%"></i></div>
+    <div class="bar"><i id="armor-fill" style="width:0%"></i></div>
+  </div>
+  <div id="ammo-box" class="panel">
+    <div><span id="ammo-mag">12</span> <span id="ammo-reserve">/ 48</span></div>
+    <div id="weapon-name">P9</div>
+    <div>Grenades: <span id="grenade-count">0</span></div>
+  </div>
+  <div id="banner"></div>
+  <div id="buy-menu" class="panel">
+    <h2>BUY — CINDERWORKS ARMOURY</h2>
+    <div id="buy-list"></div>
+    <div class="buy-hint">Press 1–6 to buy · B to close. Round starts in a few seconds.</div>
+  </div>
+</div>
+<div id="overlay-start" class="overlay">
+  <h1>CINDERWORKS</h1>
+  <h2>EMBER vs WARDENS — FIRST TO 5 ROUNDS</h2>
+  <p>An abandoned foundry. Ember attacks: plant the bomb at the Furnace (A) or the Vault (B),
+  or wipe the Wardens out. Wardens defend, and defuse what gets planted.</p>
+  <div class="keys">
+    <span><b>WASD</b> move</span><span><b>Mouse</b> aim · <b>Click</b> shoot</span>
+    <span><b>R</b> reload</span><span><b>1 / 2 / 3</b> switch weapon</span>
+    <span><b>B</b> buy menu</span><span><b>G</b> throw grenade</span>
+    <span><b>E</b> plant / defuse (hold)</span><span><b>Shift</b> walk · <b>Ctrl</b> crouch · <b>Space</b> jump</span>
+  </div>
+  <button id="btn-play">CLICK TO PLAY</button>
+</div>
+<div id="overlay-pause" class="overlay">
+  <h2>PAUSED</h2>
+  <p>Click resume to lock the mouse and keep playing.</p>
+  <button id="btn-resume">RESUME</button>
+</div>
+<div id="overlay-end" class="overlay">
+  <h1 id="end-title">EMBER WINS THE MATCH</h1>
+  <h2 id="end-score">Final score — Ember 0 : 0 Wardens</h2>
+  <p>Thanks for playing Cinderworks.</p>
+  <button id="btn-again">PLAY AGAIN</button>
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
