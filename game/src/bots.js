@@ -65,6 +65,7 @@ export function createBots(scene, world, onEvent) {
       path: [], pathIndex: 0, state: 'move', target: null,
       scanTimer: rng() * 0.15, shootTimer: 0, burstLeft: 0, burstPause: 0,
       reactTimer: 0, aimError: 0.05, deathTimer: 0, plantTimer: 0, defuseTimer: 0,
+      stuckTime: 0, avoidSide: 0,
       isCarrier: false, mesh: parts.group, headMesh: parts.head, bodyMesh: parts.torso,
       mats: parts.mats, speed: WALK_SPEED,
     };
@@ -81,8 +82,10 @@ export function createBots(scene, world, onEvent) {
       case 'rushA2': return n[9].pos;
       case 'rushB': return n[13].pos;
       case 'mid': return n[5].pos;
-      case 'holdA': return n[17].pos;
-      case 'holdB': return n[18].pos;
+      case 'holdA':
+      case 'holdA2': return n[17].pos;
+      case 'holdB':
+      case 'holdB2': return n[18].pos;
       default: return n[5].pos;
     }
   }
@@ -186,11 +189,36 @@ export function createBots(scene, world, onEvent) {
     const dx = node.pos.x - bot.pos.x;
     const dz = node.pos.z - bot.pos.z;
     const d = Math.hypot(dx, dz);
-    if (d < 0.4) { bot.pathIndex++; return; }
+    if (d < 0.4) { bot.pathIndex++; bot.stuckTime = 0; bot.avoidSide = 0; return; }
     const stepLen = Math.min(d, bot.speed * dt);
-    const nx = bot.pos.x + (dx / d) * stepLen;
-    const nz = bot.pos.z + (dz / d) * stepLen;
-    collideMove(bot.pos, nx - bot.pos.x, 0, nz - bot.pos.z, 0.35, 1.7, 0.35, world.colliders);
+    let mx = dx / d;
+    let mz = dz / d;
+    // Stuck against an obstacle: blend in a perpendicular sidestep and slide
+    // around it (kept on one side until the way is clear again).
+    if (bot.stuckTime > 0.25) {
+      if (!bot.avoidSide) bot.avoidSide = 1;
+      const px = -mz * bot.avoidSide;
+      const pz = mx * bot.avoidSide;
+      mx += px;
+      mz += pz;
+      const ml = Math.hypot(mx, mz);
+      mx /= ml;
+      mz /= ml;
+    }
+    const ox = bot.pos.x;
+    const oz = bot.pos.z;
+    collideMove(bot.pos, mx * stepLen, 0, mz * stepLen, 0.35, 1.7, 0.35, world.colliders);
+    const moved = Math.hypot(bot.pos.x - ox, bot.pos.z - oz);
+    const dAfter = Math.hypot(node.pos.x - bot.pos.x, node.pos.z - bot.pos.z);
+    if (d - dAfter > stepLen * 0.2) {
+      bot.stuckTime = 0;
+      bot.avoidSide = 0;
+    } else if (moved > stepLen * 0.5) {
+      bot.stuckTime += dt; // sliding sideways around the obstacle
+    } else {
+      bot.stuckTime += dt; // fully blocked: try the other side after a while
+      if (bot.stuckTime > 1.5) { bot.avoidSide = -bot.avoidSide || 1; bot.stuckTime = 0.25; }
+    }
     bot.yaw = Math.atan2(-(dx / d), -(dz / d));
   }
 
@@ -292,7 +320,12 @@ export function createBots(scene, world, onEvent) {
         bot.scanTimer = 0.15;
         const found = findTarget(bot, ctx);
         if (found) {
-          if (bot.target !== found) { bot.reactTimer = REACT_TIME; bot.burstLeft = 0; }
+          // findTarget() builds a fresh object each scan, so compare by the
+          // target's identity (kind + bot), not object identity — otherwise
+          // the reaction timer resets every scan and the bot never fires.
+          const sameTarget = bot.target && bot.target.kind === found.kind &&
+            (found.kind === 'player' || bot.target.bot === found.bot);
+          if (!sameTarget) { bot.reactTimer = REACT_TIME; bot.burstLeft = 0; }
           bot.target = found;
           bot.state = 'engage';
         } else if (bot.state === 'engage') {
